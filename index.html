@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard Multimídia - Computação Física UFC/SMD</title>
+  <script src="[suspicious link removed]"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #12141d;
+      color: #fff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header {
+      padding: 15px;
+      text-align: center;
+    }
+    #ui-container {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    button {
+      background: #1d4ed8;
+      border: none;
+      color: white;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: bold;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #2563eb; }
+    button.auto { background: #059669; }
+    button.auto:hover { background: #10b981; }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>PAINEL DE TELEMETRIA E CONTROLE FÍSICO-DIGITAL</h2>
+    <p>UFC / IUVI / SMD — Aluno: José Felipe de Mesquita Silva (538425)</p>
+  </header>
+
+  <div id="ui-container">
+    <button id="btn-connect" onclick="connectSerial()">🔌 Conectar Serial USB</button>
+    <button onclick="sendCommand('SERVO:0')">Abrir Cancela (0°)</button>
+    <button onclick="sendCommand('SERVO:90')">Meia Abertura (90°)</button>
+    <button onclick="sendCommand('SERVO:180')">Fechar Cancela (180°)</button>
+    <button class="auto" onclick="sendCommand('MODE:AUTO')">Modo Automático</button>
+  </div>
+
+  <script>
+    let port, reader, writer;
+    let distVal = 0, potVal = 0, servoAngle = 0, modeStr = "DESCONECTADO";
+    let serialBuffer = "";
+
+    async function connectSerial() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        writer = port.writable.getWriter();
+        reader = port.readable.getReader();
+        document.getElementById('btn-connect').innerText = "Conectado!";
+        readLoop();
+      } catch (err) {
+        alert("Erro ao conectar à porta serial: " + err);
+      }
+    }
+
+    async function readLoop() {
+      const textDecoder = new TextDecoderStream();
+      port.readable.pipeTo(textDecoder.writable);
+      const streamReader = textDecoder.readable.getReader();
+
+      while (true) {
+        const { value, done } = await streamReader.read();
+        if (done) break;
+        if (value) {
+          serialBuffer += value;
+          let lines = serialBuffer.split('\n');
+          serialBuffer = lines.pop(); // Guarda pedaço incompleto
+          for (let line of lines) {
+            parseTelemetry(line.trim());
+          }
+        }
+      }
+    }
+
+    function parseTelemetry(line) {
+      // Exemplo: DIST:35,POT:512,SERVO:90,MODE:AUTO
+      let parts = line.split(',');
+      for (let p of parts) {
+        let kv = p.split(':');
+        if (kv.length === 2) {
+          if (kv[0] === 'DIST') distVal = parseInt(kv[1]);
+          if (kv[0] === 'POT') potVal = parseInt(kv[1]);
+          if (kv[0] === 'SERVO') servoAngle = parseInt(kv[1]);
+          if (kv[0] === 'MODE') modeStr = kv[1];
+        }
+      }
+    }
+
+    async function sendCommand(cmd) {
+      if (!writer) {
+        alert("Conecte a porta serial primeiro!");
+        return;
+      }
+      const encoder = new TextEncoder();
+      await writer.write(encoder.encode(cmd + "\n"));
+    }
+
+    function setup() {
+      createCanvas(700, 360).parent(document.body);
+    }
+
+    function draw() {
+      background(24, 28, 42);
+
+      // 1. Radar de Distância Ultrassônica
+      push();
+      translate(180, 200);
+      stroke(50, 60, 90);
+      noFill();
+      for (let r = 40; r <= 140; r += 35) {
+        ellipse(0, 0, r * 2, r * 2);
+      }
+      stroke(0, 255, 120, 150);
+      line(-150, 0, 150, 0);
+      line(0, -150, 0, 150);
+
+      // Ponto de detecção do obstáculo
+      let mappedR = map(constrain(distVal, 2, 200), 2, 200, 20, 140);
+      if (distVal < 20) fill(255, 50, 50);
+      else if (distVal < 50) fill(255, 200, 0);
+      else fill(0, 255, 120);
+
+      noStroke();
+      ellipse(0, -mappedR, 16, 16);
+      fill(255);
+      textAlign(CENTER);
+      textSize(14);
+      text("Radar HC-SR04: " + distVal + " cm", 0, 155);
+      pop();
+
+      // 2. Barra Medidora do Potenciômetro Filtrado (EMA)
+      push();
+      translate(400, 80);
+      fill(255);
+      textSize(14);
+      text("Potenciômetro (EMA Filtro): " + potVal + " / 1023", 0, -10);
+
+      fill(40, 48, 70);
+      rect(0, 0, 240, 24, 6);
+      let potW = map(potVal, 0, 1023, 0, 240);
+      fill(59, 130, 246);
+      rect(0, 0, potW, 24, 6);
+      pop();
+
+      // 3. Mostrador Angular do Servomotor
+      push();
+      translate(520, 230);
+      noFill();
+      stroke(70, 80, 110);
+      strokeWeight(8);
+      arc(0, 0, 120, 120, PI, TWO_PI);
+
+      let rad = map(servoAngle, 0, 180, PI, TWO_PI);
+      stroke(245, 158, 11);
+      arc(0, 0, 120, 120, PI, rad);
+
+      noStroke();
+      fill(255);
+      textAlign(CENTER);
+      textSize(15);
+      text("Ângulo Servo: " + servoAngle + "°", 0, 25);
+      textSize(12);
+      fill(modeStr === "REMOTE" ? "#f59e0b" : "#10b981");
+      text("Modo: " + modeStr, 0, 45);
+      pop();
+    }
+  </script>
+</body>
+</html>
